@@ -1,0 +1,21 @@
+{
+  "name": "pfl-matchmaker",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "register": "node deploy-commands.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}
