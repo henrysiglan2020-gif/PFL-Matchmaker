@@ -89,8 +89,14 @@ CREATE TABLE IF NOT EXISTS offers (
   dst INTEGER,
   player TEXT,
   price INTEGER,
+  kind TEXT NOT NULL DEFAULT 'club',
+  created_by TEXT,
+  admin_override INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
-  created INTEGER NOT NULL
+  created INTEGER NOT NULL,
+  expires INTEGER,
+  resolved_at INTEGER,
+  resolved_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS player_values (
@@ -119,6 +125,20 @@ for (const [column, type] of [
 ]) {
   if (!matchColumns.some(existing => existing.name === column)) {
     db.exec(`ALTER TABLE matches ADD COLUMN ${column} ${type}`);
+  }
+}
+
+const offerColumns = db.prepare('PRAGMA table_info(offers)').all();
+for (const [column, type] of [
+  ['kind', "TEXT NOT NULL DEFAULT 'club'"],
+  ['created_by', 'TEXT'],
+  ['admin_override', 'INTEGER NOT NULL DEFAULT 0'],
+  ['expires', 'INTEGER'],
+  ['resolved_at', 'INTEGER'],
+  ['resolved_by', 'TEXT']
+]) {
+  if (!offerColumns.some(existing => existing.name === column)) {
+    db.exec(`ALTER TABLE offers ADD COLUMN ${column} ${type}`);
   }
 }
 
@@ -234,6 +254,114 @@ const team = s =>
   db.prepare('SELECT * FROM teams WHERE acronym = ?')
     .get((s || '').toUpperCase());
 
+const normalizeSearch = value =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR');
+
+const clubOwnerCache = new Map();
+
+async function clubOwnerStatus(guild, refresh = false) {
+  if (!guild) throw new Error('GUILD_REQUIRED');
+
+  const cached = clubOwnerCache.get(guild.id);
+  if (!refresh && cached && cached.expires > n()) {
+    return cached.promise;
+  }
+
+  const promise = (async () => {
+    await guild.roles.fetch();
+    await guild.members.fetch();
+    return new Map(clubs.map(club => {
+      const role = guild.roles.cache.find(
+        candidate => candidate.name === `${acr[club]} | Dono`
+      );
+      return [club, Boolean(role && role.members.size > 0)];
+    }));
+  })();
+  clubOwnerCache.set(guild.id, { promise, expires: n() + 60000 });
+
+  try {
+    return await promise;
+  } catch (error) {
+    clubOwnerCache.delete(guild.id);
+    throw error;
+  }
+}
+
+async function teamAutocomplete(i, focused) {
+  const search = normalizeSearch(focused.value);
+
+  if (i.commandName === 'selecionar-team') {
+    const owners = await clubOwnerStatus(i.guild);
+    const acronymRows = db.prepare(
+      'SELECT acronym, club FROM teams'
+    ).all();
+
+    return clubs
+      .filter(club => !owners.get(club))
+      .filter(club => acronymRows.every(row =>
+        row.acronym !== acr[club] || row.club === club
+      ))
+      .filter(club =>
+        normalizeSearch(club).includes(search) ||
+        acr[club].toLowerCase().includes(search)
+      )
+      .slice(0, 25)
+      .map(club => ({ name: `${acr[club]} | ${club}`, value: club }));
+  }
+
+  const includeNational = ['ofc', 'resultado-ofc'].includes(i.commandName);
+  const available = db.prepare(
+    includeNational
+      ? 'SELECT name, acronym FROM teams'
+      : "SELECT name, acronym FROM teams WHERE owner NOT LIKE 'national:%'"
+  ).all();
+
+  const matches = available
+    .filter(t =>
+      normalizeSearch(t.name).includes(search) ||
+      normalizeSearch(t.acronym).includes(search)
+    );
+
+  let preferred = null;
+  if (i.user?.id && i.commandName === 'estadio') {
+    preferred = db.prepare(
+      'SELECT acronym FROM teams WHERE owner = ? LIMIT 1'
+    ).get(i.user.id)?.acronym;
+  } else if (i.user?.id && i.commandName === 'ofertaplayer') {
+    preferred = db.prepare(
+      "SELECT t.acronym FROM teams t LEFT JOIN members m ON m.team_id = t.id AND m.user_id = ? AND m.kind = 'manager' WHERE t.owner = ? OR m.user_id IS NOT NULL LIMIT 1"
+    ).get(i.user.id, i.user.id)?.acronym
+  }
+  matches.sort((left, right) => {
+    const leftStarts = normalizeSearch(left.name).startsWith(search) ||
+      normalizeSearch(left.acronym).startsWith(search);
+    const rightStarts = normalizeSearch(right.name).startsWith(search) ||
+      normalizeSearch(right.acronym).startsWith(search);
+    return Number(rightStarts) - Number(leftStarts) ||
+      Number(right.acronym === preferred) - Number(left.acronym === preferred);
+  });
+
+  const choices = matches
+    .slice(0, 25)
+    .map(t => ({ name: `${t.acronym} | ${t.name}`, value: t.acronym }));
+
+  if (i.commandName === 'money' && /^\d{3,}$/.test(search) && choices.length < 25) {
+    const users = [...(i.guild?.members?.cache?.values() || [])]
+      .filter(member => member.id.includes(search))
+      .slice(0, 25 - choices.length)
+      .map(member => ({
+        name: `${member.user.tag} | ${member.id}`.slice(0, 100),
+        value: member.id
+      }));
+    choices.push(...users);
+  }
+
+  return choices;
+}
+
 const isHttpUrl = value => {
   if (!value) return true;
 
@@ -331,37 +459,179 @@ async function teamRoles(g, t) {
   }
 }
 
+function resolvePlayerOffer(i, offer, action) {
+  if (i.user.id !== offer.player) {
+    return err(i, 'Somente o jogador que recebeu esta DM pode responder.');
+  }
+
+  if (offer.expires <= n()) {
+    db.prepare(
+      "UPDATE offers SET status = 'expired', resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'"
+    ).run(n(), i.user.id, offer.id);
+    return i.update({
+      content: 'Esta oferta expirou.',
+      embeds: [],
+      components: []
+    });
+  }
+
+  if (action === 'no') {
+    const declined = db.prepare(
+      "UPDATE offers SET status = 'declined', resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'"
+    ).run(n(), i.user.id, offer.id);
+    if (declined.changes === 0) {
+      return err(i, 'Esta oferta já foi respondida.');
+    }
+    return i.update({
+      content: 'Oferta recusada. Nenhum saldo foi movimentado.',
+      embeds: [],
+      components: []
+    });
+  }
+
+  if (action !== 'yes') {
+    return err(i, 'Ação de oferta inválida.');
+  }
+
+  try {
+    const transfer = db.transaction(() => {
+      const current = db.prepare(
+        "SELECT * FROM offers WHERE id = ? AND kind = 'player' AND status = 'pending'"
+      ).get(offer.id);
+      if (!current || current.expires <= n()) {
+        throw new Error('OFFER_EXPIRED_OR_RESOLVED');
+      }
+      if (current.price < 150000) {
+        throw new Error('OFFER_BELOW_MINIMUM');
+      }
+
+      const currentTeam = db.prepare(
+        "SELECT team_id FROM members WHERE user_id = ? AND kind = 'player' LIMIT 1"
+      ).get(current.player);
+      if ((current.src === null && currentTeam) ||
+          (current.src !== null && currentTeam?.team_id !== current.src)) {
+        throw new Error('PLAYER_TEAM_CHANGED');
+      }
+
+      const accepted = db.prepare(
+        "UPDATE offers SET status = 'accepted', resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending' AND expires > ?"
+      ).run(n(), i.user.id, current.id, n());
+      if (accepted.changes === 0) {
+        throw new Error('OFFER_EXPIRED_OR_RESOLVED');
+      }
+
+      const debit = db.prepare(
+        'UPDATE teams SET balance = balance - ? WHERE id = ? AND balance >= ?'
+      ).run(current.price, current.dst, current.price);
+      if (debit.changes === 0) {
+        throw new Error('INSUFFICIENT_FUNDS');
+      }
+
+      ensure(current.player);
+      db.prepare(
+        'UPDATE users SET balance = balance + ? WHERE id = ?'
+      ).run(current.price, current.player);
+
+      db.prepare(
+        "DELETE FROM members WHERE user_id = ? AND kind = 'player'"
+      ).run(current.player);
+      db.prepare(
+        "INSERT INTO members (team_id, user_id, kind) VALUES (?, ?, 'player')"
+      ).run(current.dst, current.player);
+
+      db.prepare(
+        'INSERT INTO transactions (team_id, amount, reason, ref, created) VALUES (?, ?, ?, ?, ?)'
+      ).run(
+        current.dst,
+        -current.price,
+        `Compra do jogador ${current.player}`,
+        `player-offer:${current.id}:out`,
+        n()
+      );
+      db.prepare(
+        'INSERT INTO transactions (user_id, amount, reason, ref, created) VALUES (?, ?, ?, ?, ?)'
+      ).run(
+        current.player,
+        current.price,
+        'Recebimento por transferência',
+        `player-offer:${current.id}:in`,
+        n()
+      );
+
+      return db.prepare('SELECT name, acronym FROM teams WHERE id = ?')
+        .get(current.dst);
+    });
+
+    const buyer = transfer();
+    return i.update({
+      content: `Transferência concluída: você agora faz parte de **${buyer.name} (${buyer.acronym})** e recebeu ${cash(offer.price)}.`,
+      embeds: [],
+      components: []
+    });
+  } catch (error) {
+    if (['INSUFFICIENT_FUNDS', 'PLAYER_TEAM_CHANGED', 'OFFER_BELOW_MINIMUM'].includes(error.message)) {
+      db.prepare(
+        "UPDATE offers SET status = 'cancelled', resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'"
+      ).run(n(), i.user.id, offer.id);
+      const messages = {
+        INSUFFICIENT_FUNDS: 'A oferta foi cancelada: o time comprador não tem mais saldo suficiente.',
+        PLAYER_TEAM_CHANGED: 'A oferta foi cancelada: sua equipe mudou desde o envio.',
+        OFFER_BELOW_MINIMUM: 'A oferta foi cancelada: o valor está abaixo do mínimo permitido.'
+      };
+      return i.update({ content: messages[error.message], embeds: [], components: [] });
+    }
+    if (error.message === 'OFFER_EXPIRED_OR_RESOLVED') {
+      db.prepare(
+        "UPDATE offers SET status = 'expired', resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'"
+      ).run(n(), i.user.id, offer.id);
+      return i.update({ content: 'Esta oferta expirou ou já foi respondida.', embeds: [], components: [] });
+    }
+    throw error;
+  }
+}
+
 client.once(Events.ClientReady, c => {
   console.log('Bot conectado: ' + c.user.tag);
+});
+
+client.on(Events.GuildMemberUpdate, (_before, after) => {
+  clubOwnerCache.delete(after.guild.id);
+});
+
+client.on(Events.GuildMemberRemove, member => {
+  clubOwnerCache.delete(member.guild.id);
 });
 
 client.on(Events.InteractionCreate, async i => {
   try {
     if (i.isAutocomplete()) {
       const focused = i.options.getFocused(true);
-      const search = focused.value.toLocaleLowerCase('pt-BR');
-      const includeNational = i.commandName === 'ofc';
-      const available = db.prepare(
-        includeNational
-          ? 'SELECT name, acronym FROM teams'
-          : "SELECT name, acronym FROM teams WHERE owner NOT LIKE 'national:%'"
-      ).all();
-      const choices = available
-        .filter(t =>
-          t.name.toLocaleLowerCase('pt-BR').includes(search) ||
-          t.acronym.toLocaleLowerCase('pt-BR').includes(search)
-        )
-        .slice(0, 25)
-        .map(t => ({ name: `${t.acronym} | ${t.name}`, value: t.acronym }));
-
-      return i.respond(choices);
+      try {
+        return i.respond(await teamAutocomplete(i, focused));
+      } catch (error) {
+        console.error('Falha ao consultar times para autocomplete:', error);
+        return i.respond([]);
+      }
     }
 
     if (i.isButton()) {
+      if (i.customId.startsWith('playeroffer:')) {
+        const [, offerId, action] = i.customId.split(':');
+        const offer = db.prepare(
+          "SELECT * FROM offers WHERE id = ? AND kind = 'player'"
+        ).get(Number(offerId));
+
+        if (!offer || offer.status !== 'pending') {
+          return err(i, 'Esta oferta já foi respondida, cancelada ou expirou.');
+        }
+
+        return resolvePlayerOffer(i, offer, action);
+      }
+
       const [, id, act] = i.customId.split(':');
 
       const o = db.prepare(
-        'SELECT * FROM offers WHERE id = ?'
+        "SELECT * FROM offers WHERE id = ? AND kind = 'club'"
       ).get(Number(id));
 
       if (!o || o.status !== 'pending') {
@@ -550,27 +820,57 @@ client.on(Events.InteractionCreate, async i => {
         return err(i, 'Clube inválido.');
       }
 
-      if (db.prepare('SELECT id FROM teams WHERE club = ?').get(club)) {
-        return err(i, 'Esse clube já tem dono.');
+      let owners;
+      try {
+        owners = await clubOwnerStatus(i.guild, true);
+      } catch (error) {
+        console.error('Não foi possível verificar os cargos de dono:', error);
+        return err(i, 'Não consegui confirmar se o clube está livre. Tente novamente.');
       }
 
-      const x = db.prepare(
-        'INSERT INTO teams (name, acronym, description, invite, owner, created, club) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).run(
-        club,
-        acr[club],
-        `Clube ${club}`,
-        'https://discord.com',
-        i.user.id,
-        n(),
-        club
-      );
+      if (owners.get(club)) {
+        return err(i, 'Esse clube já tem pelo menos um membro com o cargo de dono.');
+      }
+
+      const existing = db.prepare(
+        'SELECT * FROM teams WHERE club = ?'
+      ).get(club);
+      const acronymConflict = db.prepare(
+        'SELECT id FROM teams WHERE acronym = ? AND (club IS NULL OR club <> ?)'
+      ).get(acr[club], club);
+
+      if (acronymConflict) {
+        return err(i, `A sigla ${acr[club]} já está em uso por outro time.`);
+      }
+
+      const teamId = db.transaction(() => {
+        if (existing) {
+          db.prepare(
+            'UPDATE teams SET owner = ? WHERE id = ? AND club = ?'
+          ).run(i.user.id, existing.id, club);
+          return existing.id;
+        }
+
+        const inserted = db.prepare(
+          'INSERT INTO teams (name, acronym, description, invite, owner, created, club) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).run(
+          club,
+          acr[club],
+          `Clube ${club}`,
+          'https://discord.com',
+          i.user.id,
+          n(),
+          club
+        );
+        return Number(inserted.lastInsertRowid);
+      })();
 
       const t = db.prepare(
         'SELECT * FROM teams WHERE id = ?'
-      ).get(Number(x.lastInsertRowid));
+      ).get(teamId);
 
       await teamRoles(i.guild, t);
+      clubOwnerCache.delete(i.guild.id);
 
       return i.reply({
         embeds: [
@@ -851,7 +1151,7 @@ client.on(Events.InteractionCreate, async i => {
             penaltiesB: null,
             crestA,
             crestB
-          }).setFooter({ text: `Cada time recebeu ${cash(50000)}. Resultado: /resultado-ofc id:${id}` })
+          }).setFooter({ text: `Cada time recebeu ${cash(50000)}. Registre o placar com /resultado-ofc.` })
         ]
       });
     }
@@ -859,26 +1159,27 @@ client.on(Events.InteractionCreate, async i => {
     else if (c === 'resultado-ofc') {
       if (!admin(i)) return err(i, 'Apenas administradores.');
 
-      const id = i.options.getInteger('id');
+      const competition = i.options.getString('competicao').trim();
+      const competitionCrest = i.options.getString('imagem_competicao');
+      const a = team(i.options.getString('time_a'));
+      const b = team(i.options.getString('time_b'));
+      const crestA = i.options.getString('escudo_a');
+      const crestB = i.options.getString('escudo_b');
       const scoreA = i.options.getInteger('gols_a');
       const scoreB = i.options.getInteger('gols_b');
       const penaltiesA = i.options.getInteger('penaltis_a');
       const penaltiesB = i.options.getInteger('penaltis_b');
 
-      const m = db.prepare(
-        "SELECT * FROM matches WHERE id = ? AND type = 'ofc'"
-      ).get(id);
+      if (!a || !b || a.id === b.id) {
+        return err(i, 'Escolha dois times diferentes que estejam cadastrados.');
+      }
 
-      if (!m || m.status !== 'pending') {
-        return err(i, 'OFC inexistente ou já finalizada.');
+      if (![competitionCrest, crestA, crestB].every(isHttpUrl)) {
+        return err(i, 'As URLs das imagens devem começar com http:// ou https://.');
       }
 
       if ((penaltiesA === null) !== (penaltiesB === null)) {
         return err(i, 'Informe os pênaltis dos dois times ou deixe os dois vazios.');
-      }
-
-      if (scoreA === scoreB && penaltiesA === null) {
-        return err(i, 'A OFC precisa de um vencedor; informe os pênaltis em caso de empate.');
       }
 
       if (penaltiesA !== null && (scoreA !== scoreB || penaltiesA === penaltiesB)) {
@@ -886,62 +1187,105 @@ client.on(Events.InteractionCreate, async i => {
       }
 
       const winnerId = scoreA === scoreB
-        ? (penaltiesA > penaltiesB ? m.a : m.b)
-        : (scoreA > scoreB ? m.a : m.b);
+        ? (penaltiesA === null ? null : (penaltiesA > penaltiesB ? a.id : b.id))
+        : (scoreA > scoreB ? a.id : b.id);
 
       const tx = db.transaction(() => {
-        const result = db.prepare(
-          "UPDATE matches SET status = 'completed', winner = ?, score_a = ?, score_b = ?, penalties_a = ?, penalties_b = ? WHERE id = ? AND status = 'pending'"
-        ).run(winnerId, scoreA, scoreB, penaltiesA, penaltiesB, id);
+        const pending = db.prepare(
+          "SELECT id FROM matches WHERE type = 'ofc' AND status = 'pending' AND competition = ? AND ((a = ? AND b = ?) OR (a = ? AND b = ?)) ORDER BY created DESC LIMIT 1"
+        ).get(competition, a.id, b.id, b.id, a.id);
 
-        if (result.changes === 0) {
-          throw new Error('OFC_ALREADY_COMPLETED');
-        }
-
-        db.prepare(
-          'UPDATE teams SET balance = balance + 350000 WHERE id = ?'
-        ).run(winnerId);
-
-        db.prepare(
-          'INSERT INTO transactions (team_id, amount, reason, ref, created) VALUES (?, ?, ?, ?, ?)'
-        ).run(
-          winnerId,
-          350000,
-          `Vitória OFC #${id}`,
-          `ofc:${id}:win`,
-          n()
-        );
-      });
-
-      try {
-        tx();
-      } catch (e) {
-        if (e.message === 'OFC_ALREADY_COMPLETED') {
-          return err(i, 'Essa OFC já foi finalizada.');
-        }
-
-        throw e;
-      }
-
-      const a = db.prepare('SELECT * FROM teams WHERE id = ?').get(m.a);
-      const b = db.prepare('SELECT * FROM teams WHERE id = ?').get(m.b);
-      const winner = db.prepare('SELECT * FROM teams WHERE id = ?').get(winnerId);
-
-      return i.reply({
-        embeds: [
-          matchEmbed({
-            title: `🏆 ${m.competition || 'OFC'} | OFC #${id}`,
-            competitionCrest: m.competition_crest,
-            a,
-            b,
+        let matchId;
+        if (pending) {
+          matchId = pending.id;
+          db.prepare(
+            "UPDATE matches SET status = 'completed', winner = ?, score_a = ?, score_b = ?, penalties_a = ?, penalties_b = ?, competition_crest = ?, crest_a = ?, crest_b = ? WHERE id = ? AND status = 'pending'"
+          ).run(winnerId, scoreA, scoreB, penaltiesA, penaltiesB, competitionCrest, crestA, crestB, matchId);
+        } else {
+          const inserted = db.prepare(
+            "INSERT INTO matches (ref, type, a, b, winner, score_a, score_b, penalties_a, penalties_b, competition, competition_crest, crest_a, crest_b, status, created) VALUES (?, 'ofc', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)"
+          ).run(
+            `ofc-result:${i.id}`,
+            a.id,
+            b.id,
+            winnerId,
             scoreA,
             scoreB,
             penaltiesA,
             penaltiesB,
-            crestA: m.crest_a || a.crest,
-            crestB: m.crest_b || b.crest
-          }).setFooter({ text: `${winner.name} venceu e recebeu ${cash(350000)}.` })
-        ]
+            competition,
+            competitionCrest,
+            crestA,
+            crestB,
+            n()
+          );
+          matchId = Number(inserted.lastInsertRowid);
+
+          for (const currentTeam of [a, b]) {
+            db.prepare(
+              'UPDATE teams SET balance = balance + 50000 WHERE id = ?'
+            ).run(currentTeam.id);
+            db.prepare(
+              'INSERT INTO transactions (team_id, amount, reason, ref, created) VALUES (?, ?, ?, ?, ?)'
+            ).run(
+              currentTeam.id,
+              50000,
+              'Participação OFC',
+              `ofc-result:${i.id}:entry:${currentTeam.id}`,
+              n()
+            );
+          }
+        }
+
+        if (winnerId !== null) {
+          db.prepare(
+            'UPDATE teams SET balance = balance + 350000 WHERE id = ?'
+          ).run(winnerId);
+          db.prepare(
+            'INSERT INTO transactions (team_id, amount, reason, ref, created) VALUES (?, ?, ?, ?, ?)'
+          ).run(
+            winnerId,
+            350000,
+            `Vitória OFC ${competition}`,
+            `ofc-result:${i.id}:win`,
+            n()
+          );
+        }
+
+        return matchId;
+      });
+
+      tx();
+
+      const competitionEmbed = new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle(competition)
+        .setImage(competitionCrest);
+
+      const resultEmbed = new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle('Resultado')
+        .setThumbnail(crestA)
+        .addFields(
+          { name: '\u200b', value: `[Escudo](${crestA})\n**${a.name}**`, inline: true },
+          {
+            name: 'PLACAR',
+            value: `**${scoreA} x ${scoreB}**` +
+              (penaltiesA === null ? '' : `\nPênaltis: **${penaltiesA} x ${penaltiesB}**`),
+            inline: true
+          },
+          { name: '\u200b', value: `[Escudo](${crestB})\n**${b.name}**`, inline: true }
+        )
+        .setFooter({
+          text: winnerId === null
+            ? 'Empate'
+            : `${db.prepare('SELECT name FROM teams WHERE id = ?').get(winnerId).name} venceu e recebeu ${cash(350000)}.`,
+          iconURL: crestB
+        })
+        .setTimestamp();
+
+      return i.reply({
+        embeds: [competitionEmbed, resultEmbed]
       });
     }
 
@@ -1008,6 +1352,112 @@ client.on(Events.InteractionCreate, async i => {
           `${src.name} oferece <@${player.id}> para ${dst.name} por ${cash(price)}.`,
         components: [buttons]
       });
+    }
+
+    else if (c === 'ofertaplayer') {
+      const player = i.options.getUser('jogador');
+      const buyer = team(i.options.getString('sigla'));
+      const price = i.options.getInteger('preco');
+      const isAdmin = Boolean(admin(i));
+
+      if (!Number.isSafeInteger(price) || price < 150000) {
+        return err(i, 'O preço mínimo da oferta é 150.000.');
+      }
+
+      if (!player?.id || player.id === i.user.id) {
+        return err(i, 'Escolha outro usuário para receber a oferta.');
+      }
+
+      if (!buyer || buyer.owner.startsWith('national:')) {
+        return err(i, 'A sigla precisa corresponder a um time cadastrado.');
+      }
+
+      if (player.bot) {
+        return err(i, 'Não é possível oferecer transferência a um bot.');
+      }
+
+      const manager = db.prepare(
+        "SELECT 1 FROM members WHERE team_id = ? AND user_id = ? AND kind = 'manager'"
+      ).get(buyer.id, i.user.id);
+      const authorized = buyer.owner === i.user.id || Boolean(manager);
+      const adminOverride = isAdmin && !authorized;
+
+      if (!authorized && !isAdmin) {
+        return err(i, 'Somente o dono ou manager deste time pode fazer a oferta.');
+      }
+
+      if (buyer.balance < price) {
+        return err(i, 'O time comprador não tem saldo suficiente.');
+      }
+
+      db.prepare(
+        "UPDATE offers SET status = 'expired', resolved_at = ?, resolved_by = 'system' WHERE kind = 'player' AND status = 'pending' AND expires <= ?"
+      ).run(n(), n());
+
+      const currentTeam = db.prepare(
+        "SELECT team_id FROM members WHERE user_id = ? AND kind = 'player' LIMIT 1"
+      ).get(player.id);
+
+      if (currentTeam?.team_id === buyer.id) {
+        return err(i, 'Esse jogador já pertence ao time comprador.');
+      }
+
+      const expires = n() + 7 * 24 * 60 * 60 * 1000;
+      const insert = db.prepare(
+        "INSERT INTO offers (ref, src, dst, player, price, kind, created_by, admin_override, status, created, expires) VALUES (?, ?, ?, ?, ?, 'player', ?, ?, 'pending', ?, ?)"
+      ).run(
+        `player-offer:${i.id}`,
+        currentTeam?.team_id ?? null,
+        buyer.id,
+        player.id,
+        price,
+        i.user.id,
+        adminOverride ? 1 : 0,
+        n(),
+        expires
+      );
+      const offerId = Number(insert.lastInsertRowid);
+
+      const buttons = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`playeroffer:${offerId}:yes`)
+          .setLabel('Aceitar oferta')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`playeroffer:${offerId}:no`)
+          .setLabel('Recusar oferta')
+          .setStyle(ButtonStyle.Danger)
+      );
+      const embed = new EmbedBuilder()
+        .setColor(0x3498db)
+        .setTitle('Oferta de transferência')
+        .setDescription(
+          `**${buyer.name} (${buyer.acronym})** quer contar com você.\n` +
+          `Valor: **${cash(price)}**\n` +
+          `Oferta válida por 7 dias.`
+        )
+        .setTimestamp();
+
+      await i.deferReply({ ephemeral: true });
+      try {
+        await player.send({ embeds: [embed], components: [buttons] });
+      } catch {
+        db.prepare(
+          "UPDATE offers SET status = 'cancelled', resolved_at = ?, resolved_by = 'system' WHERE id = ? AND status = 'pending'"
+        ).run(n(), offerId);
+        return i.editReply('Não consegui enviar a DM ao jogador. A oferta foi cancelada sem movimentar saldo.');
+      }
+
+      const audit = adminOverride
+        ? ' Registrada com exceção administrativa.'
+        : '';
+      if (adminOverride) {
+        log(
+          i.guild,
+          `Oferta player #${offerId} criada com exceção administrativa por ${i.user} (${i.user.id}); comprador ${buyer.acronym}, jogador ${player.id}, valor ${price}.`
+        );
+      }
+      return i.editReply(`Oferta #${offerId} enviada por DM para ${player}.${audit}`);
     }
 
     else if (c === 'valordoplayer') {
