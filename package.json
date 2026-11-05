@@ -11,11 +11,12 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.11",
+    "better-sqlite3": "^12.11.1",
     "discord.js": "^14.19.3",
-    "better-sqlite3": "^11.8.1",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.6.1"
   },
   "allowScripts": {
-    "better-sqlite3@11.10.0": true
+    "better-sqlite3@12.11.1": true
   }
 }
