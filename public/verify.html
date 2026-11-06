@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071a36">
+  <meta name="description" content="Vincule suas contas Discord e Roblox à comunidade PFL com autorização oficial.">
+  <title>Verificar Roblox • PFL</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=blue-3">
+  <script src="/assets/app.js?v=verify-profile-2" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">⚽</span> PFL <span class="brand-sub">COMMUNITY</span></a>
+    <nav aria-label="Navegação principal"><a href="/rules.html">📜 Regras</a><a href="/">← Início</a>
+      <div class="account-menu" data-account-menu hidden>
+        <button class="account-trigger" type="button" aria-expanded="false" aria-controls="account-actions" aria-label="Abrir menu da conta"><img data-account-avatar alt="" hidden><span data-account-fallback>P</span></button>
+        <div class="account-actions" id="account-actions" hidden><strong data-account-name></strong><a data-account-server href="https://discord.com/channels/@me" target="_blank" rel="noopener noreferrer">Ir para o servidor PFL</a><button type="button" data-account-action="switch">Trocar de conta</button><button type="button" data-account-action="logout">Sair</button><small data-account-message role="status"></small></div>
+      </div>
+    </nav>
+  </header>
+
+  <main class="page-main verify-main">
+    <section class="page-heading">
+      <p class="eyebrow">🔵 VINCULAÇÃO SEGURA DE CONTAS</p>
+      <h1>Verificar <span>Roblox</span></h1>
+      <p>Conecte primeiro sua conta Discord que participa do servidor. Depois confirme sua conta Roblox pela página oficial do Roblox.</p>
+    </section>
+
+    <section class="verify-card">
+      <div class="verify-shield">🛡️</div>
+      <h2>Verificação em duas etapas</h2>
+      <ol class="verify-steps">
+        <li><span>1</span><div><strong>Conectar Discord</strong><small>Entrar com Discord e confirmar que você participa do servidor.</small></div></li>
+        <li><span>2</span><div><strong>Conectar Roblox</strong><small>Autorizar a confirmação da sua conta na página oficial do Roblox.</small></div></li>
+        <li><span>3</span><div><strong>Vincular no servidor</strong><small>O bot confirma as duas identidades e pode adicionar o cargo de verificado.</small></div></li>
+      </ol>
+      <p id="verify-status" class="form-status" role="status" aria-live="polite">Consultando o status da sua conta (máximo de 7 segundos)...</p>
+      <div id="oauth-setup-help" class="oauth-setup-help" hidden>
+        <strong>Configuração necessária para a administração</strong>
+        <p>Adicione estas variáveis nas Secrets/variáveis de ambiente da hospedagem do bot (não envie os segredos pelo chat):</p>
+        <code>SITE_BASE_URL=https://seu-dominio</code>
+        <code>DISCORD_OAUTH_CLIENT_ID e DISCORD_OAUTH_CLIENT_SECRET</code>
+        <code>ROBLOX_OAUTH_CLIENT_ID e ROBLOX_OAUTH_CLIENT_SECRET</code>
+        <p>Cadastre também os retornos OAuth nos painéis dos aplicativos:</p>
+        <code>https://seu-dominio/oauth/discord/callback</code>
+        <code>https://seu-dominio/oauth/roblox/callback</code>
+        <p>Use o mesmo domínio HTTPS em todos os endereços e reinicie o bot após salvar as variáveis.</p>
+      </div>
+      <button id="verify-retry" class="button button-secondary verify-retry" type="button" hidden>Tentar novamente</button>
+      <div id="discord-connect">
+        <a class="button button-primary verify-button" href="/oauth/discord">🔵 Conectar Discord <span>→</span></a>
+      </div>
+      <div id="roblox-connect" hidden>
+        <p id="discord-account" class="account-pill"></p>
+        <a class="button button-primary verify-button" id="roblox-button" href="/oauth/roblox">🎮 Conectar Roblox <span>→</span></a>
+      </div>
+      <div id="roblox-connected" class="connected-account" hidden>
+        <p>✅ Contas verificadas</p>
+        <strong id="verified-accounts"></strong>
+      </div>
+      <p class="oauth-privacy">🔒 Não pedimos sua senha, código de autenticação ou token. A autorização acontece nos sites oficiais do Discord e Roblox. O site usa tokens OAuth temporários apenas no servidor para confirmar sua identidade; eles não são salvos nem enviados ao bot. Guardamos os IDs vinculados e os nomes públicos do Discord e Roblox.</p>
+    </section>
+  </main>
+
+  <footer><a href="/">← Voltar ao início</a><span>⚽ PFL Matchmaker</span><a href="/rules.html">Regras</a></footer>
+</body>
+</html>

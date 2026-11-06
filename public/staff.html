@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071a36">
+  <meta name="description" content="Candidate-se para ajudar a equipe da comunidade PFL.">
+  <title>Inscrição Staff • PFL</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=blue-3">
+  <script src="/assets/app.js?v=staff-form-1" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">⚽</span> PFL <span class="brand-sub">COMMUNITY</span></a>
+    <nav aria-label="Navegação principal"><a href="/rules.html">📜 Regras</a><a href="/">← Início</a>
+      <div class="account-menu" data-account-menu hidden>
+        <button class="account-trigger" type="button" aria-expanded="false" aria-controls="account-actions" aria-label="Abrir menu da conta"><img data-account-avatar alt="" hidden><span data-account-fallback>P</span></button>
+        <div class="account-actions" id="account-actions" hidden><strong data-account-name></strong><a data-account-server href="https://discord.com/channels/@me" target="_blank" rel="noopener noreferrer">Ir para o servidor PFL</a><button type="button" data-account-action="switch">Trocar de conta</button><button type="button" data-account-action="logout">Sair</button><small data-account-message role="status"></small></div>
+      </div>
+    </nav>
+  </header>
+
+  <main class="page-main">
+    <section class="page-heading">
+      <p class="eyebrow">🛡️ JUNTE-SE À EQUIPE</p>
+      <h1>Inscrição para <span>Staff</span></h1>
+      <p>Quer ajudar a comunidade? Preencha o formulário e informe seu ID do Discord. Não é necessário verificar uma conta Roblox. A equipe recebe a candidatura no canal e a administração por DM.</p>
+    </section>
+
+    <div class="form-layout">
+      <form class="application-form" id="staff-form">
+        <div class="form-heading"><span>📝</span><div><h2>Sua candidatura</h2><p>Campos com <b>*</b> são obrigatórios.</p></div></div>
+        <div class="form-row">
+          <label>Seu nome ou apelido <b>*</b><input name="applicantName" required maxlength="80" placeholder="Como podemos te chamar?"></label>
+          <label>Área em que quer ajudar <b>*</b>
+            <select name="area" required>
+              <option value="">Selecione uma área</option>
+              <option value="Moderacao">🛡️ Moderação</option>
+              <option value="Suporte">🤝 Suporte à comunidade</option>
+              <option value="Organizacao">📅 Organização de eventos</option>
+            </select>
+          </label>
+        </div>
+        <label>Seu ID de usuário do Discord <b>*</b><input name="discordUserId" required inputmode="numeric" pattern="[0-9]{17,20}" minlength="17" maxlength="20" placeholder="Ex.: 123456789012345678"><span class="optional">Ative o Modo Desenvolvedor nas configurações do Discord, clique com o botão direito no seu perfil e selecione “Copiar ID de usuário”. O bot confirma se esse ID participa do servidor.</span></label>
+        <label>Quando você costuma estar disponível? <b>*</b><textarea name="availability" required maxlength="500" rows="3" placeholder="Dias e horários aproximados"></textarea></label>
+        <label>Já teve alguma experiência parecida? <span class="optional">(opcional)</span><textarea name="experience" maxlength="1000" rows="4" placeholder="Pode contar sobre outras comunidades, projetos ou habilidades."></textarea></label>
+        <label>Por que você quer fazer parte da staff? <b>*</b><textarea name="motivation" required minlength="10" maxlength="1000" rows="5" placeholder="Conte como você gostaria de contribuir..."></textarea></label>
+
+        <label class="honeypot" aria-hidden="true">Não preencha este campo<input name="website" tabindex="-1" autocomplete="off"></label>
+        <label class="check-label"><input type="checkbox" name="acceptedRules" required><span>Li as <a href="/rules.html" target="_blank" rel="noopener noreferrer">regras do servidor</a> e entendo que os dados desta inscrição serão armazenados e enviados à equipe pelo canal e por DM. Confirmo que o ID do Discord informado é meu. <b>*</b></span></label>
+        <button class="button button-primary submit-button" type="submit">📨 Enviar inscrição <span>→</span></button>
+        <p class="form-status" id="form-status" role="status" aria-live="polite"></p>
+        <p class="privacy-note">🔒 Não inclua senhas ou informações privadas. Sua inscrição não será publicada no site.</p>
+      </form>
+
+      <aside class="side-panel">
+        <div class="side-icon">💙</div><h2>Valeu por querer ajudar!</h2>
+        <p>A equipe vai analisar sua inscrição. Seja sincero, respeitoso e explique sua disponibilidade.</p>
+        <ul><li>✅ Informe seu ID correto do Discord</li><li>🤝 Respeite todos os membros</li><li>📩 A equipe recebe a inscrição no canal e por DM</li></ul>
+        <a href="/rules.html">📜 Ler regras do servidor →</a>
+      </aside>
+    </div>
+  </main>
+
+  <footer><a href="/">← Voltar ao início</a><span>⚽ PFL Matchmaker</span><a href="/rules.html">Regras</a></footer>
+</body>
+</html>

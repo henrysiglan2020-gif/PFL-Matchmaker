@@ -33,11 +33,10 @@ const {
   handleStatisticsInteraction
 } = require('./match-statistics');
 const { handleMatchAnnouncementInteraction } = require('./match-announcements');
-
-if (!process.env.DISCORD_TOKEN) {
-  console.error('Configure DISCORD_TOKEN nas Secrets.');
-  process.exit(1);
-}
+const {
+  startStaffSite,
+  handleStaffApplicationInteraction
+} = require('./staff-site');
 
 const dbPath = process.env.DATABASE_PATH || './data/pfl.sqlite';
 fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
@@ -829,6 +828,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages
   ]
 });
+
+startStaffSite({ client, db });
 
 const proposalLocks = new Set();
 
@@ -5695,6 +5696,8 @@ async function handleCentralAdminInteraction(i) {
 
 client.on(Events.InteractionCreate, async i => {
   try {
+    if (await handleStaffApplicationInteraction(i, { db, admin })) return;
+
     if ((i.customId?.startsWith('announcement:') ||
          ['central:shouts', 'central:fixtures'].includes(i.customId)) &&
         await handleMatchAnnouncementInteraction(i, { admin })) {
@@ -8883,4 +8886,10 @@ client.on(Events.InteractionCreate, async i => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+if (process.env.DISCORD_TOKEN) {
+  client.login(process.env.DISCORD_TOKEN).catch(error => {
+    console.error('Falha ao conectar o bot ao Discord:', error);
+  });
+} else {
+  console.warn('DISCORD_TOKEN não configurado. O site continuará disponível, mas os recursos do bot ficarão offline.');
+}

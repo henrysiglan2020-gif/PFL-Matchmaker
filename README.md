@@ -2,10 +2,28 @@
 
 ## Instalar no Replit
 1. Envie os arquivos deste projeto para um Repl Node.js.
-2. Em **Secrets / Environment variables**, configure `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `ADMIN_ROLE_ID` (opcional) e `DATABASE_PATH=./data/pfl.sqlite`.
+2. Em **Secrets / Environment variables**, configure `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, `ADMIN_ROLE_ID` (opcional), `STAFF_FORM_ADMIN_ID` (opcional; coloque seu ID de usuário se quiser receber as candidaturas por DM), `WEB_PORT` (opcional; padrão `3000`) e `DATABASE_PATH=./data/pfl.sqlite`.
 3. Rode `npm install`.
 4. Rode `npm run register` uma vez para publicar os slash commands no servidor definido em `GUILD_ID`.
 5. Rode `npm start`.
+
+## Site de Staff e regras
+O bot também hospeda um site web: `/` (ou `/index.html`) é a página inicial, `/staff.html` contém o formulário para candidatura à staff, `/rules.html` mostra as regras e `/verify.html` vincula Discord e Roblox. O site continua servindo as páginas mesmo se `DISCORD_TOKEN` estiver ausente, mas o envio de inscrições e a verificação de contas exigem o bot online. As candidaturas são enviadas ao canal `1568361610957820085` e também por DM ao usuário definido em `STAFF_FORM_ADMIN_ID`; se essa variável estiver vazia, o dono do servidor em `GUILD_ID` recebe a DM. A porta é `WEB_PORT`, ou `PORT` quando `WEB_PORT` não estiver definido. Em hospedagens como Replit, exponha essa porta para publicar o site. No Codespaces, mantenha `npm start` rodando e abra a porta 3000 na aba **Portas**.
+
+As inscrições são gravadas na tabela `staff_applications` do mesmo SQLite do bot e enviadas ao canal e por DM com botões de aceitar/recusar. **A candidatura não exige OAuth nem verificação Roblox.** O candidato informa o próprio ID do Discord; o bot confirma que esse usuário está no servidor antes de aceitar o formulário. O administrador deve conferir se o ID corresponde ao candidato ao analisar a inscrição. Aceitar Moderação concede `1568360029650952342`, Organização de eventos concede `1568360436657815822` e Suporte concede `1568361187937099897`. Só administradores do servidor ou o revisor configurado podem usar os botões. O bot precisa de **Manage Roles** e sua posição deve estar acima dos três cargos. Deixe o canal de candidaturas privado para a equipe. Se o Discord não aceitar uma das notificações, a outra ainda pode chegar; se nenhuma chegar, a inscrição permanece no banco e o erro é registrado. `STAFF_FORM_ADMIN_ID` é opcional para enviar candidatura, mas deve conter seu ID de usuário se a DM for para você; sem ele, o dono do servidor recebe a DM. O formulário aplica limite por endereço e não aceita anexos nem senhas. A página `/rules.html` inclui regras iniciais de exemplo; revise e adapte o texto às regras oficiais do servidor antes de divulgar.
+
+Para achar o ID do Discord, ative **Modo Desenvolvedor** em Configurações do Discord → Avançado, clique com o botão direito no próprio perfil e escolha **Copiar ID de usuário**. O formulário só funciona com o bot online, `GUILD_ID` correto, permissão para enviar mensagens no canal `1568361610957820085` e acesso à DM da administração. OAuth e Roblox podem continuar configurados para a página opcional `/verify.html`, mas não são usados pela candidatura de staff.
+
+### Configurar a verificação Discord/Roblox
+1. Publique o site em um endereço HTTPS estável antes de configurar o OAuth. Defina `SITE_BASE_URL` com a origem exata, por exemplo `https://site.exemplo.com` (sem barra ou caminho no final). Um domínio encaminhado do Codespaces pode mudar e não é recomendado como endereço permanente.
+2. No [Discord Developer Portal](https://discord.com/developers/applications), abra a aplicação do bot, acesse **OAuth2 → Redirects** e adicione `https://SEU-DOMINIO/oauth/discord/callback`. Use o `CLIENT_ID` já configurado e guarde o Client Secret exclusivamente nas Secrets como `DISCORD_OAUTH_CLIENT_SECRET`. Se a aplicação for diferente da do bot, configure também `DISCORD_OAUTH_CLIENT_ID`.
+3. Crie uma credencial OAuth para usuário no [Roblox Creator Dashboard](https://create.roblox.com/dashboard/credentials), configure o redirect `https://SEU-DOMINIO/oauth/roblox/callback` e os escopos de identidade `openid` e `profile`. Guarde `ROBLOX_OAUTH_CLIENT_ID` e `ROBLOX_OAUTH_CLIENT_SECRET` nas Secrets.
+4. Configure `ROBLOX_VERIFIED_ROLE_ID=1561546117013966948` (o cargo informado) e mantenha `GUILD_ID` apontando para o servidor certo. O bot precisa estar no servidor com **Manage Roles**, e seu cargo deve ficar acima do cargo de verificado.
+5. Inicie novamente `npm start`. Em `/verify.html`, o membro entra pelo Discord, o bot confirma que ele está no servidor e então a página permite a autorização direta no Roblox. Quando a verificação termina, a página mostra o nome do Discord e o nome de exibição/usuário Roblox; o botão de inscrição só habilita com as duas contas vinculadas.
+
+O fluxo usa OAuth oficial. A pessoa não informa senha, código de autenticação ou token no site. O servidor usa o token OAuth temporariamente para consultar a identidade e não salva nem envia esse token ao bot; no SQLite ficam apenas o ID do Discord, o ID Roblox e o nome público Roblox. As sessões do site guardam somente um hash do identificador de sessão e expiram após sete dias.
+
+Para criar páginas estáticas adicionais, coloque o arquivo HTML em `public/`, adicione sua rota à lista `pages` em `staff-site.js` e crie um link para ela na navegação do site.
 
 No Discord Developer Portal, habilite `bot` e `applications.commands`, além do privileged Gateway Intent **Server Members Intent** para pesquisar membros do servidor. Dê ao bot Manage Roles, Send Messages, Embed Links e Use Application Commands. O cargo do bot deve ficar acima dos cargos gerenciados.
 
